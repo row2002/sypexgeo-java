@@ -18,7 +18,7 @@ dependencies {
     // nullability annotations for Kotlin and static analysis; not needed at run time
     compileOnly("org.jspecify:jspecify:1.0.0")
     testCompileOnly("org.jspecify:jspecify:1.0.0")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
