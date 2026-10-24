@@ -18,7 +18,7 @@ jobs:
       - id: key
         run: echo "key=sypexgeo-testdata-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
       - id: cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: testdata
           key: ${{ steps.key.outputs.key }}
@@ -38,7 +38,7 @@ jobs:
         run: echo "::warning::Sypex Geo databases could not be downloaded, integration tests are skipped"
       - name: Save Sypex Geo databases
         if: steps.download.outcome == 'success'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: testdata
           key: ${{ steps.key.outputs.key }}
@@ -60,7 +60,7 @@ jobs:
       # caches Gradle (open-source actions/cache based caching; v6 defaults to a proprietary one) and validates the wrapper jar
       - uses: gradle/actions/setup-gradle@v5
       # restore only: a cache miss (download failed) leaves testdata/ absent and the integration tests are skipped
-      - uses: actions/cache/restore@v5
+      - uses: actions/cache/restore@v6
         with:
           path: testdata
           key: ${{ needs.testdata.outputs.key }}
