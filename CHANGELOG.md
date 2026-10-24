@@ -41,8 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `name(Locale)` on `Country`, `Region` and `City`: the Russian name for a Russian locale, otherwise the English one.
 - JSpecify nullability annotations (`@NullMarked` package, `@Nullable` `GeoInfo.region`/`city` and `String ip`
   parameters), so Kotlin sees `Region?` and `City?`; a compile-time-only dependency.
-- `Automatic-Module-Name: io.github.row2002.sypexgeo`, full POM metadata, preparation for Maven Central
-  (`io.github.row2002`; JitPack keeps `com.github.row2002`).
+- `Automatic-Module-Name: io.github.row2002.sypexgeo` and full POM metadata.
+- Published to Maven Central as `io.github.row2002:sypexgeo-java`.
 - Hermetic tests on synthetic databases; README recipes (Spring Boot, client IP behind a proxy, servlet filter,
   database updates), FAQ and measured performance.
 

@@ -4,9 +4,6 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    ignore:
-      # pinned: 0.35+ needs Gradle 9
-      - dependency-name: "com.vanniktech.maven.publish*"
   - package-ecosystem: github-actions
     directory: /
     schedule:

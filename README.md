@@ -1,7 +1,7 @@
 # sypexgeo-java
 
 [![CI](https://github.com/row2002/sypexgeo-java/actions/workflows/ci.yml/badge.svg)](https://github.com/row2002/sypexgeo-java/actions/workflows/ci.yml)
-[![JitPack](https://jitpack.io/v/row2002/sypexgeo-java.svg)](https://jitpack.io/#row2002/sypexgeo-java)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.row2002/sypexgeo-java)](https://central.sonatype.com/artifact/io.github.row2002/sypexgeo-java)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Русский** | [English](README.en.md)
@@ -14,10 +14,9 @@
 // build.gradle.kts
 repositories {
     mavenCentral()
-    maven("https://jitpack.io") { content { includeGroup("com.github.row2002") } }
 }
 dependencies {
-    implementation("com.github.row2002:sypexgeo-java:1.1.0")
+    implementation("io.github.row2002:sypexgeo-java:1.1.0")
 }
 ```
 
@@ -80,36 +79,29 @@ public class Main {
 
 ## Установка
 
-Библиотека публикуется через [JitPack](https://jitpack.io/#row2002/sypexgeo-java). В Maven Central её пока нет.
+Библиотека публикуется в [Maven Central](https://central.sonatype.com/artifact/io.github.row2002/sypexgeo-java).
 
 **Gradle (Kotlin DSL)**
 
 ```kotlin
 repositories {
     mavenCentral()
-    maven("https://jitpack.io") { content { includeGroup("com.github.row2002") } }
 }
 
 dependencies {
-    implementation("com.github.row2002:sypexgeo-java:1.1.0")
+    implementation("io.github.row2002:sypexgeo-java:1.1.0")
 }
 ```
-
-Фильтр `content` нужен, чтобы Gradle обращался к JitPack только за этой библиотекой, а не за всеми зависимостями.
 
 **Gradle (Groovy DSL)**
 
 ```groovy
 repositories {
     mavenCentral()
-    maven {
-        url 'https://jitpack.io'
-        content { includeGroup 'com.github.row2002' }
-    }
 }
 
 dependencies {
-    implementation 'com.github.row2002:sypexgeo-java:1.1.0'
+    implementation 'io.github.row2002:sypexgeo-java:1.1.0'
 }
 ```
 
@@ -120,7 +112,7 @@ dependencies {
 sypexgeo = "1.1.0"
 
 [libraries]
-sypexgeo = { module = "com.github.row2002:sypexgeo-java", version.ref = "sypexgeo" }
+sypexgeo = { module = "io.github.row2002:sypexgeo-java", version.ref = "sypexgeo" }
 ```
 
 ```kotlin
@@ -132,21 +124,14 @@ dependencies {
 **Maven**
 
 ```xml
-<repositories>
-    <repository>
-        <id>jitpack.io</id>
-        <url>https://jitpack.io</url>
-    </repository>
-</repositories>
-
 <dependency>
-    <groupId>com.github.row2002</groupId>
+    <groupId>io.github.row2002</groupId>
     <artifactId>sypexgeo-java</artifactId>
     <version>1.1.0</version>
 </dependency>
 ```
 
-Версия 1.0.0 повторяла поведение SxGeo.php на границах диапазонов (IP, равный началу диапазона, мог попасть в соседний); с 1.1.0 это исправлено. Все изменения — в [CHANGELOG.md](CHANGELOG.md).
+Старая версия 1.0.0 опубликована только в JitPack: `com.github.row2002:sypexgeo-java:1.0.0`. Она повторяла поведение SxGeo.php на границах диапазонов (IP, равный началу диапазона, мог попасть в соседний); с 1.1.0 это исправлено. Все изменения — в [CHANGELOG.md](CHANGELOG.md).
 
 ## Где взять базу
 

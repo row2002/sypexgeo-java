@@ -1,7 +1,7 @@
 # sypexgeo-java
 
 [![CI](https://github.com/row2002/sypexgeo-java/actions/workflows/ci.yml/badge.svg)](https://github.com/row2002/sypexgeo-java/actions/workflows/ci.yml)
-[![JitPack](https://jitpack.io/v/row2002/sypexgeo-java.svg)](https://jitpack.io/#row2002/sypexgeo-java)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.row2002/sypexgeo-java)](https://central.sonatype.com/artifact/io.github.row2002/sypexgeo-java)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 [Русский](README.md) | **English**
@@ -14,10 +14,9 @@ Java library for reading [Sypex Geo](https://sypexgeo.net/) 2.2 databases (`SxGe
 // build.gradle.kts
 repositories {
     mavenCentral()
-    maven("https://jitpack.io") { content { includeGroup("com.github.row2002") } }
 }
 dependencies {
-    implementation("com.github.row2002:sypexgeo-java:1.1.0")
+    implementation("io.github.row2002:sypexgeo-java:1.1.0")
 }
 ```
 
@@ -80,36 +79,29 @@ This is a port of the official `SxGeo.php` 2.2.3 with its range-boundary bug fix
 
 ## Installation
 
-Published via [JitPack](https://jitpack.io/#row2002/sypexgeo-java). Maven Central is not available yet.
+Published to [Maven Central](https://central.sonatype.com/artifact/io.github.row2002/sypexgeo-java).
 
 **Gradle (Kotlin DSL)**
 
 ```kotlin
 repositories {
     mavenCentral()
-    maven("https://jitpack.io") { content { includeGroup("com.github.row2002") } }
 }
 
 dependencies {
-    implementation("com.github.row2002:sypexgeo-java:1.1.0")
+    implementation("io.github.row2002:sypexgeo-java:1.1.0")
 }
 ```
-
-The `content` filter makes Gradle ask JitPack only for this library, not for every other dependency.
 
 **Gradle (Groovy DSL)**
 
 ```groovy
 repositories {
     mavenCentral()
-    maven {
-        url 'https://jitpack.io'
-        content { includeGroup 'com.github.row2002' }
-    }
 }
 
 dependencies {
-    implementation 'com.github.row2002:sypexgeo-java:1.1.0'
+    implementation 'io.github.row2002:sypexgeo-java:1.1.0'
 }
 ```
 
@@ -120,7 +112,7 @@ dependencies {
 sypexgeo = "1.1.0"
 
 [libraries]
-sypexgeo = { module = "com.github.row2002:sypexgeo-java", version.ref = "sypexgeo" }
+sypexgeo = { module = "io.github.row2002:sypexgeo-java", version.ref = "sypexgeo" }
 ```
 
 ```kotlin
@@ -132,21 +124,14 @@ dependencies {
 **Maven**
 
 ```xml
-<repositories>
-    <repository>
-        <id>jitpack.io</id>
-        <url>https://jitpack.io</url>
-    </repository>
-</repositories>
-
 <dependency>
-    <groupId>com.github.row2002</groupId>
+    <groupId>io.github.row2002</groupId>
     <artifactId>sypexgeo-java</artifactId>
     <version>1.1.0</version>
 </dependency>
 ```
 
-Version 1.0.0 kept the SxGeo.php behaviour at range boundaries (an IP equal to the first address of a range could resolve to the neighbouring range); this is fixed since 1.1.0. See [CHANGELOG.md](CHANGELOG.md).
+The older version 1.0.0 is published only on JitPack, as `com.github.row2002:sypexgeo-java:1.0.0`. It kept the SxGeo.php behaviour at range boundaries (an IP equal to the first address of a range could resolve to the neighbouring range); this is fixed since 1.1.0. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Getting a database
 

@@ -3,12 +3,12 @@ import com.vanniktech.maven.publish.JavaLibrary
 
 plugins {
     `java-library`
-    id("com.vanniktech.maven.publish") version "0.34.0" // 0.35+ needs Gradle 9
+    id("com.vanniktech.maven.publish") version "0.35.0"
 }
 
 // JitPack (it sets JITPACK=true) publishes com.github.row2002:sypexgeo-java:<tag>; Maven Central uses io.github.row2002
 group = if (System.getenv("JITPACK") == "true") "com.github.row2002" else "io.github.row2002"
-version = findProperty("version")?.takeIf { it != "unspecified" } ?: "1.1.0" // JitPack passes -Pversion=<tag>
+version = findProperty("version")?.takeIf { it != "unspecified" } ?: "1.1.0" // the release workflow and JitPack pass -Pversion=<tag>
 
 repositories {
     mavenCentral()
