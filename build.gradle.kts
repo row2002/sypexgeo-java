@@ -3,7 +3,7 @@ import com.vanniktech.maven.publish.JavaLibrary
 
 plugins {
     `java-library`
-    id("com.vanniktech.maven.publish") version "0.35.0"
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 // JitPack (it sets JITPACK=true) publishes com.github.row2002:sypexgeo-java:<tag>; Maven Central uses io.github.row2002
