@@ -1,62 +1,75 @@
 # Releasing
 
-Releases are published by tag. [JitPack](https://jitpack.io/#row2002/sypexgeo-java) builds every tag by itself as
-`com.github.row2002:sypexgeo-java:<tag>`. The [release workflow](.github/workflows/release.yml) builds the tag,
-publishes it to Maven Central as `io.github.row2002:sypexgeo-java:<version>` when the secrets below are set
-(otherwise it skips this step with a notice) and creates a GitHub release with the tag's section of `CHANGELOG.md`.
+A release is a pushed tag. The library is published in two places:
 
-The group depends on the environment: JitPack sets `JITPACK=true` and gets `com.github.row2002`, every other build
-uses `io.github.row2002` (see `build.gradle.kts`). Check both locally:
+- **JitPack** as `com.github.row2002:sypexgeo-java:<tag>`. Nothing to set up: JitPack builds a tag on the first request
+  (`jitpack.yml`; JitPack sets `JITPACK=true`, which selects the `com.github.row2002` group in `build.gradle.kts`).
+- **Maven Central** as `io.github.row2002:sypexgeo-java:<version>`, by the [release workflow](.github/workflows/release.yml)
+  with the [vanniktech maven-publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/central/).
+  Prepared, not published yet: it needs the one-time setup below. Until the secrets are set, the workflow skips this
+  step with a notice and still succeeds.
 
-```bash
-JITPACK=true ./gradlew publishToMavenLocal   # ~/.m2/repository/com/github/row2002/sypexgeo-java/
-./gradlew publishToMavenLocal                # ~/.m2/repository/io/github/row2002/sypexgeo-java/
-```
+Either way, the release workflow then creates a GitHub release with the tag's section of `CHANGELOG.md` as the
+release notes and the jars (main, sources, javadoc) attached.
 
 ## One-time setup for Maven Central
 
-1. Sign in to the [Central Portal](https://central.sonatype.com/) with the `row2002` GitHub account.
-   The namespace `io.github.row2002` is then verified automatically; otherwise add it under
-   *Namespaces* and create the temporary public repository it asks for.
-2. *Account* → *Generate User Token*: a username and a password for publishing.
+1. Sign in to the [Central Portal](https://central.sonatype.com/) with the `row2002` GitHub account. The namespace
+   `io.github.row2002` is then verified automatically; otherwise add it under *Namespaces*, create the temporary public
+   repository `row2002/<verification key>` that the portal asks for, press *Verify*, then delete the repository.
+2. *Account* → *Generate User Token*: a username and a password for publishing (not the account password).
 3. Create a GPG key for signing and publish its public part:
 
    ```bash
-   gpg --full-generate-key
-   gpg --list-secret-keys --keyid-format short
-   gpg --keyserver keyserver.ubuntu.com --send-keys <KEY_ID>
-   gpg --armor --export-secret-keys <KEY_ID>   # the value of SIGNING_KEY
+   gpg --quick-gen-key "row2002 <your e-mail>" rsa4096 sign 0   # remember the passphrase
+   gpg --list-keys                                               # the key id is the last 16 hex digits
+   gpg --keyserver keyserver.ubuntu.com --send-keys <key id>
+   gpg --armor --export-secret-keys <key id> > signing-key.asc   # for the secret below, then delete the file
    ```
 
-4. Add the repository secrets (*Settings* → *Secrets and variables* → *Actions*):
+4. Add the repository secrets (*Settings* → *Secrets and variables* → *Actions* → *New repository secret*):
 
    | Secret | Value |
    |---|---|
    | `MAVEN_CENTRAL_USERNAME` | user token username |
    | `MAVEN_CENTRAL_PASSWORD` | user token password |
-   | `SIGNING_KEY` | ASCII-armored private key |
-   | `SIGNING_KEY_PASSWORD` | its passphrase |
+   | `SIGNING_KEY` | the whole content of `signing-key.asc` |
+   | `SIGNING_KEY_PASSWORD` | the key passphrase |
 
    They reach Gradle as the `mavenCentralUsername`, `mavenCentralPassword`, `signingInMemoryKey` and
-   `signingInMemoryKeyPassword` properties of the [vanniktech maven-publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/central/);
-   for a manual release put them into `~/.gradle/gradle.properties` and run
+   `signingInMemoryKeyPassword` properties. For a manual release put them into `~/.gradle/gradle.properties` and run
    `./gradlew publishAndReleaseToMavenCentral -Pversion=<version>`.
 
-After the first successful publication, add the Maven Central coordinates to the "Installation" sections of
-`README.md` and `README.en.md`.
+The same namespace, token and key serve [sypexgeo-kotlin](https://github.com/row2002/sypexgeo-kotlin): add the same
+secrets to that repository too. After the first successful publication, add the Maven Central coordinates to the
+"Installation" sections of `README.md` and `README.en.md`.
 
 ## Release procedure
 
-1. In `CHANGELOG.md`, rename `## [x.y.z] — Unreleased` to `## [x.y.z] — YYYY-MM-DD` and update the links at the end.
-2. Make sure the version in `build.gradle.kts` (the default when no `-Pversion` is given) and in the READMEs is `x.y.z`.
-3. Commit, then tag and push (existing tags have no `v` prefix; `vX.Y.Z` works too):
+1. In `CHANGELOG.md`, rename `## [x.y.z] - Unreleased` to `## [x.y.z] - YYYY-MM-DD` and update the comparison
+   links at the bottom. The release workflow takes the release notes from the section with exactly this heading.
+2. Set the version `x.y.z` in the installation examples of `README.md` and `README.en.md` and in the
+   `?: "x.y.z"` default of `build.gradle.kts` (used when no `-Pversion` is given).
+3. Commit, then tag and push. The tag is the version, as JitPack users write it (a `v` prefix also works and is
+   dropped for Maven Central):
 
    ```bash
    git tag x.y.z
    git push origin main x.y.z
    ```
 
-4. Check the *Release* workflow run, the GitHub release and, if configured, the deployment in the Central Portal.
-5. Open `https://jitpack.io/#row2002/sypexgeo-java/x.y.z` to make JitPack build the tag right away.
+4. Check the *Release* workflow run. It builds and tests the tag, runs `publishAndReleaseToMavenCentral` if the
+   secrets are set (the Central Portal releases the deployment by itself once it passes validation; nothing to press
+   there, its state is under *Deployments*) and creates the GitHub release.
+5. JitPack: open `https://jitpack.io/#row2002/sypexgeo-java/x.y.z` once to trigger the build and check its log.
+6. Release the same version of [sypexgeo-kotlin](https://github.com/row2002/sypexgeo-kotlin) the same way, keeping
+   the versions of the two libraries in step.
 
-Do the same in [sypexgeo-kotlin](https://github.com/row2002/sypexgeo-kotlin), keeping the versions of the two libraries in step.
+## Checking the publication locally
+
+```bash
+JITPACK=true ./gradlew publishToMavenLocal   # ~/.m2/repository/com/github/row2002/sypexgeo-java/
+./gradlew publishToMavenLocal                # ~/.m2/repository/io/github/row2002/sypexgeo-java/
+```
+
+Artifacts are signed only when the `signingInMemoryKey` Gradle property is set and not blank.

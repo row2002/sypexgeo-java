@@ -18,7 +18,7 @@ body:
     id: info
     attributes:
       label: Database
-      description: Output of `geo.info()` (build date, edition, charset) and the file name.
+      description: Output of `geo.info()`, or the constructor exception if the database does not open, and the file name.
       placeholder: "DbInfo[version=2.2, created=2026-08-12T00:00:00Z, type=SxGeo City EN, charset=UTF-8, hasCities=true, ipBlocks=...]  SxGeoCity.dat"
       render: text
     validations:
@@ -27,9 +27,9 @@ body:
     id: ip
     attributes:
       label: IP address
-      description: The address (or the string) you passed to the library.
+      description: The address (or the string) you passed to the library, if the problem is about an IP.
     validations:
-      required: true
+      required: false
   - type: textarea
     id: expected
     attributes:

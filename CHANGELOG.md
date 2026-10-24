@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] — Unreleased
+## [1.1.0] - Unreleased
 
 ### Fixed
 
@@ -26,9 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   city's country (names, coordinates, fields) instead of only its id and ISO code.
 - The constructors throw `IllegalArgumentException` for invalid, corrupted or truncated databases, with a message
   that says what the data is instead (a ZIP archive, an HTML page, a MaxMind `.mmdb` file, an empty file);
-  the `Path` constructor prefixes it with the path.
+  the `Path` and `File` constructors prefix it with the path.
 - The `byte[]` constructor copies the array.
 - `country()` and `countryId()` on a city database read only the country id of the record: about twice as fast.
+  They decode only the country id, so a corrupted record is reported by `lookup()` (`IllegalStateException`) but may
+  not be by `country()` and `countryId()`.
 
 ### Added
 
@@ -44,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hermetic tests on synthetic databases; README recipes (Spring Boot, client IP behind a proxy, servlet filter,
   database updates), FAQ and measured performance.
 
-## [1.0.0]
+## [1.0.0] - 2026-10-24
 
 - First release: reader for Sypex Geo 2.2 databases (`SxGeo.dat`, `SxGeoCity.dat`, `SxGeoMax.dat`) with
   `country()`, `countryId()`, `lookup()` and `info()`.

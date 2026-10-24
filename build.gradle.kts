@@ -3,7 +3,7 @@ import com.vanniktech.maven.publish.JavaLibrary
 
 plugins {
     `java-library`
-    id("com.vanniktech.maven.publish") version "0.34.0"
+    id("com.vanniktech.maven.publish") version "0.34.0" // 0.35+ needs Gradle 9
 }
 
 // JitPack (it sets JITPACK=true) publishes com.github.row2002:sypexgeo-java:<tag>; Maven Central uses io.github.row2002
@@ -48,11 +48,11 @@ tasks.test {
 }
 
 // sources and javadoc jars, POM; ./gradlew publishToMavenCentral needs the mavenCentralUsername/mavenCentralPassword
-// properties (see RELEASING.md), artifacts are signed only when a signing key is given
+// properties (see RELEASING.md), artifacts are signed only when a signing key is given (a blank one counts as none)
 mavenPublishing {
     configure(JavaLibrary(javadocJar = JavadocJar.None(), sourcesJar = true)) // the javadoc jar comes from withJavadocJar()
     publishToMavenCentral()
-    if (providers.gradleProperty("signingInMemoryKey").isPresent) signAllPublications()
+    if (!providers.gradleProperty("signingInMemoryKey").orNull.isNullOrBlank()) signAllPublications()
     coordinates(group.toString(), "sypexgeo-java", version.toString())
     pom {
         name = "sypexgeo-java"

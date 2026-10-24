@@ -26,9 +26,20 @@ curl -fLO https://sypexgeo.net/files/SxGeoCity_utf8.zip && unzip SxGeoCity_utf8.
 ```
 
 ```java
-SxGeo geo = new SxGeo(Path.of("SxGeoCity.dat"));         // один раз на приложение, потокобезопасен
-String iso = geo.country("77.88.8.8").orElse("XX");      // "RU"
-Optional<GeoInfo> info = geo.lookup("93.73.35.74");      // Украина, Киевская область, Киев
+import io.github.row2002.sypexgeo.GeoInfo;
+import io.github.row2002.sypexgeo.SxGeo;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.Optional;
+
+public class Main {
+    public static void main(String[] args) throws IOException {
+        SxGeo geo = new SxGeo(Path.of("SxGeoCity.dat"));    // один раз на приложение, потокобезопасен
+        System.out.println(geo.country("77.88.8.8").orElse("XX")); // RU
+        Optional<GeoInfo> info = geo.lookup("77.88.8.8");
+        info.map(GeoInfo::city).ifPresent(city -> System.out.println(city.nameRu())); // Москва
+    }
+}
 ```
 
 ## Содержание
@@ -41,10 +52,10 @@ Optional<GeoInfo> info = geo.lookup("93.73.35.74");      // Украина, Ки
 - [API](#api)
 - [Рецепты](#рецепты): [Spring Boot](#spring-boot), [IP клиента за прокси](#ip-клиента-за-прокси), [servlet-фильтр](#servlet-фильтр), [обновление базы](#обновление-базы)
 - [FAQ](#faq)
-- [Sypex Geo и MaxMind GeoLite2](#sypex-geo-и-maxmind-geolite2)
+- [Sypex Geo или MaxMind GeoLite2](#sypex-geo-или-maxmind-geolite2)
 - [Производительность](#производительность)
 - [Сборка и тесты](#сборка-и-тесты)
-- [Лицензия на данные](#лицензия-на-данные)
+- [Лицензия и данные](#лицензия-и-данные)
 
 ## Какую библиотеку выбрать?
 
@@ -65,7 +76,7 @@ Optional<GeoInfo> info = geo.lookup("93.73.35.74");      // Украина, Ки
 - поддерживаются UTF-8, CP1251 и Latin-1 версии баз;
 - понятные ошибки: если вместо `.dat` передан ZIP-архив, HTML-страница с ошибкой или файл MaxMind, об этом так и будет сказано.
 
-Порт официального `SxGeo.php` 2.2.3 с исправленной ошибкой на границах диапазонов: IP, совпадающий с первым адресом диапазона, всегда относится к этому диапазону (`SxGeo.php` иногда возвращает для него соседний). Ответы проверены перебором: на настоящих базах — для начала каждого диапазона и адреса перед ним, на синтетических — для всех границ диапазонов и индексов.
+Порт официального `SxGeo.php` 2.2.3 с исправленной ошибкой на границах диапазонов: IP, совпадающий с первым адресом диапазона, всегда относится к этому диапазону (`SxGeo.php` иногда возвращает для него соседний). Каждая граница диапазонов проверяется в тестах на синтетических базах; тесты на настоящих базах проверяют случайные адреса.
 
 ## Установка
 
@@ -143,8 +154,8 @@ dependencies {
 
 | Файл | Что внутри | Размер |
 |---|---|---|
-| `SxGeo.dat` ([SxGeoCountry.zip](https://sypexgeo.net/files/SxGeoCountry.zip)) | только страны | ~0,8 МБ |
-| `SxGeoCity.dat` ([SxGeoCity_utf8.zip](https://sypexgeo.net/files/SxGeoCity_utf8.zip)) | страны, регионы, города | ~13 МБ |
+| `SxGeo.dat` ([SxGeoCountry.zip](https://sypexgeo.net/files/SxGeoCountry.zip)) | только страны | ~1 МБ |
+| `SxGeoCity.dat` ([SxGeoCity_utf8.zip](https://sypexgeo.net/files/SxGeoCity_utf8.zip)) | страны, регионы, города | несколько десятков МБ |
 | `SxGeoMax.dat` (платная City Max) | то же + дополнительные поля (часовые пояса и др.) | — |
 
 ```bash
@@ -152,7 +163,7 @@ curl -fLO https://sypexgeo.net/files/SxGeoCountry.zip && unzip SxGeoCountry.zip 
 curl -fLO https://sypexgeo.net/files/SxGeoCity_utf8.zip && unzip SxGeoCity_utf8.zip SxGeoCity.dat
 ```
 
-Базы регулярно обновляются, см. [Обновление базы](#обновление-базы). Сама библиотека данных не содержит, см. [Лицензия на данные](#лицензия-на-данные).
+Базы регулярно обновляются: дату сборки показывают страница загрузки и `info().created()`, см. [Обновление базы](#обновление-базы). Сама библиотека данных не содержит, см. [Лицензия и данные](#лицензия-и-данные).
 
 ## Использование
 
@@ -173,7 +184,7 @@ geo.lookup("93.73.35.74").ifPresent(info -> {
     info.region().nameEn();   // "Kyiv"   (region() может быть null)
     info.region().iso();      // "UA-30"
     info.city().nameRu();     // "Киев"   (city() может быть null)
-    info.city().nameEn();     // "Kyiv"
+    info.city().nameEn();     // "Kiev"
     info.city().name(Locale.forLanguageTag("ru-RU")); // "Киев"
     info.city().lat();        // 50.45466
     info.city().lon();        // 30.5238
@@ -255,6 +266,7 @@ Object tz = info.region().fields().get("timezone"); // только в City Max
 
 - Конструкторы: `IOException` — файл или поток не удалось прочитать; `IllegalArgumentException` — данные не являются базой Sypex Geo 2.2, повреждены (неверный заголовок, индекс или формат записей) или обрезаны. У конструкторов с `Path` и `File` сообщение начинается с пути к файлу, например `/srv/geo/SxGeoCity.zip: Not a Sypex Geo database: this is a ZIP archive - unzip it and pass the .dat file`. Расшифровка — в [FAQ](#что-означают-ошибки-конструктора).
 - `country`, `countryId` и `lookup` не бросают исключений на неверный IP. Если же сама запись в базе повреждена (ссылается за пределы своего раздела или выходит за его конец), они бросают `IllegalStateException` с сообщением `Corrupted Sypex Geo database…`. С исправной базой этого не происходит.
+- `country()` и `countryId()` разбирают из записи только id страны, поэтому повреждённую запись обнаружит `lookup()` (`IllegalStateException`), а `country()` может и не обнаружить.
 
 ### Сведения о базе
 
@@ -268,12 +280,14 @@ geo.info().hasCities(); // true
 
 ### Spring Boot
 
+Один экземпляр на всё приложение, путь — из `application.properties` (`sypexgeo.path=/var/lib/geo/SxGeoCity.dat`):
+
 ```java
 @Configuration
 class GeoConfig {
     @Bean
-    SxGeo sxGeo(@Value("${geo.db:SxGeoCity.dat}") Path db) throws IOException {
-        return new SxGeo(db);
+    SxGeo sxGeo(@Value("${sypexgeo.path}") Path path) throws IOException {
+        return new SxGeo(path); // с битым файлом приложение не запустится
     }
 }
 ```
@@ -288,7 +302,7 @@ public class GeoService {
     private final AtomicReference<SxGeo> geo;
     private volatile FileTime loaded;
 
-    public GeoService(@Value("${geo.db:SxGeoCity.dat}") Path db) throws IOException {
+    public GeoService(@Value("${sypexgeo.path}") Path db) throws IOException {
         this.db = db;
         this.loaded = Files.getLastModifiedTime(db);
         this.geo = new AtomicReference<>(new SxGeo(db));
@@ -318,16 +332,21 @@ public class GeoService {
 
 ### IP клиента за прокси
 
-Не разбирайте `X-Forwarded-For` сами: этот заголовок может прислать кто угодно, и первый адрес в нём — то, что написал клиент. Пусть это делает сервер, доверяя только вашим прокси, а вы берите `request.getRemoteAddr()`:
+Не разбирайте `X-Forwarded-For` сами: этот заголовок может прислать любой клиент, и его первое значение — то, что написал клиент, так что кто угодно сможет выбрать себе страну. Пусть сервер подставит адрес клиента из заголовков только ваших **доверенных** прокси, а вы берите `request.getRemoteAddr()` (в Ktor — `call.request.origin.remoteAddress`):
 
-- Spring Boot: `server.forward-headers-strategy=native` (`RemoteIpValve` в Tomcat; адресам внутренних сетей он доверяет по умолчанию, другие прокси задаются в `server.tomcat.remoteip.internal-proxies`).
+- Spring Boot на Tomcat: `server.forward-headers-strategy=native`. Это `RemoteIpValve`: он доверяет только известным прокси (по умолчанию адресам частных сетей, другие задаются в `server.tomcat.remoteip.internal-proxies`) и читает `X-Forwarded-For` справа налево. Не используйте `framework` (`ForwardedHeaderFilter`) и `ForwardedRequestCustomizer` в Jetty, если ваш прокси не перезаписывает `X-Forwarded-For`: они берут его первое значение, то есть присланное клиентом.
 - Отдельный Tomcat: `<Valve className="org.apache.catalina.valves.RemoteIpValve" />` в `server.xml`.
+- Ktor: плагин `XForwardedHeaders` (зависимость `io.ktor:ktor-server-forwarded-header`), настроенный под вашу цепочку прокси: `install(XForwardedHeaders) { useLastProxy() }` для ровно одного прокси, который дописывает адрес в `X-Forwarded-For`, и `skipLastProxies(N - 1)` для N таких прокси.
 
-Включайте это, только если приложение доступно исключительно через прокси, иначе клиенты смогут подменить свой адрес.
+Включайте это, только если приложение доступно исключительно через ваши прокси, иначе клиенты смогут подменить свой адрес.
 
 ### Servlet-фильтр
 
 ```java
+import io.github.row2002.sypexgeo.SxGeo;
+import jakarta.servlet.*; // javax.servlet.* для Servlet 4 / Spring Boot 2
+import java.io.IOException;
+
 public class GeoFilter implements Filter {
     private final SxGeo geo;
 
@@ -343,9 +362,11 @@ public class GeoFilter implements Filter {
 }
 ```
 
+В Spring Boot достаточно объявить фильтр бином: метод `@Bean`, который возвращает `new GeoFilter(geo)`, подключит его ко всем запросам. Чтобы задать URL-шаблоны или порядок, верните вместо него `FilterRegistrationBean<GeoFilter>`.
+
 ### Обновление базы
 
-Sypex Geo выпускает новые базы примерно раз в месяц. Скачайте базу во временный файл рядом с текущим, проверьте её, открыв, затем переименуйте поверх старого файла (на той же файловой системе это атомарно) и подмените экземпляр; до этого момента запросы обслуживает старый:
+Sypex Geo регулярно обновляет базы; дату сборки показывают страница загрузки и `geo.info().created()`. Скачайте базу во временный файл рядом с текущим, проверьте её, открыв, затем переименуйте поверх старого файла (на той же файловой системе это атомарно) и подмените экземпляр; до этого момента запросы обслуживает старый:
 
 ```java
 static void update(URI zipUrl, Path db, AtomicReference<SxGeo> geo) throws IOException, InterruptedException {
@@ -387,27 +408,28 @@ curl -fsSL -o /tmp/SxGeoCity.zip https://sypexgeo.net/files/SxGeoCity_utf8.zip \
 
 ### Какую базу выбрать?
 
-`SxGeo.dat`, если нужна только страна: она гораздо меньше (~0,8 МБ), и `country()` на ней примерно вдвое быстрее, чем на базе городов (см. [Производительность](#производительность)). `SxGeoCity.dat` — для регионов и городов, с названиями на русском и английском. `country()` и `countryId()` работают с обеими.
+`SxGeo.dat`, если нужна только страна: ~1 МБ вместо нескольких десятков МБ, и любой вызов (`country()`, `countryId()`, `lookup()`) занимает ~0,2 мкс. `SxGeoCity.dat` — для регионов и городов с названиями на русском и английском: `lookup()` на ней занимает ~2 мкс, `country()` и `countryId()` — ~0,4 мкс (см. [Производительность](#производительность)). `SxGeoMax.dat` (платная) добавляет поля вроде часовых поясов.
 
 ### Как часто обновлять базу?
 
-Sypex Geo обновляет базы примерно раз в месяц. Перекачивайте их ежемесячно, см. [Обновление базы](#обновление-базы).
+Sypex Geo обновляет базы регулярно: дату последней сборки смотрите на [странице загрузки](https://sypexgeo.net/ru/download/), а дату загруженного файла — в `info().created()`. Новую базу можно подхватить без перезапуска, см. [Обновление базы](#обновление-базы).
 
-### Что такое AP, EU, A1, O1?
+### Что такое `AP`, `EU`, `A1`, `O1`?
 
-Специальные коды в таблице стран Sypex Geo, унаследованные из старого списка стран GeoIP: `AP` — Азиатско-Тихоокеанский регион, `EU` — Европа, `A1` — анонимный прокси, `O1` — другая страна. Это не страны ISO 3166-1; `XK` (Косово) — код из пользовательского диапазона.
+Специальные коды в таблице стран Sypex Geo, унаследованные из старого списка стран GeoIP: `AP` — Азиатско-Тихоокеанский регион и `EU` — Европа, без конкретной страны; `A1` — анонимный прокси; `O1` — другая страна. Это не коды стран ISO 3166-1: обработайте их сами, прежде чем искать название страны или показывать флаг. `XK` (Косово) — код из пользовательского диапазона ISO 3166-1, JDK его знает.
 
-### Как получить название страны с `SxGeo.dat`?
+### Как получить названия стран с `SxGeo.dat`?
 
-В базе стран названий нет. Возьмите их из JDK:
+В базе стран есть только ISO-коды, названия можно взять из JDK:
 
 ```java
 String iso = geo.country(ip).orElse("");
-String en = new Locale("", iso).getDisplayCountry(Locale.ENGLISH);          // "Russia"
-String ru = new Locale("", iso).getDisplayCountry(Locale.forLanguageTag("ru")); // "Россия"
+Locale country = new Locale("", iso); // на JDK 19+: Locale.of("", iso)
+String en = country.getDisplayCountry(Locale.ENGLISH);              // "Russia"
+String ru = country.getDisplayCountry(Locale.forLanguageTag("ru")); // "Россия"
 ```
 
-Для кодов, которых JDK не знает (`AP`, `EU`, `A1`, `O1`), `getDisplayCountry` возвращает сам код.
+Для `AP`, `A1` и `O1` метод `getDisplayCountry` возвращает сам код, а для `EU` — «Европейский союз» (`"European Union"`), хотя Sypex Geo имеет в виду Европу: эти четыре кода обработайте сами. На JDK 19+ создавайте локаль через `Locale.of("", iso)`: конструктор `new Locale("", iso)` (в Kotlin — `Locale("", iso)`) работает на JDK 8+, но с JDK 19 устарел.
 
 ### Что означают ошибки конструктора?
 
@@ -424,18 +446,19 @@ String ru = new Locale("", iso).getDisplayCountry(Locale.forLanguageTag("ru")); 
 
 Конструкторы с `Path` и `File` добавляют в начало сообщения путь к файлу.
 
-## Sypex Geo и MaxMind GeoLite2
+## Sypex Geo или MaxMind GeoLite2
 
 | | Sypex Geo | MaxMind GeoLite2 |
 |---|---|---|
-| Скачивание | прямая ссылка, без регистрации | бесплатная учётная запись, лицензионный ключ, GeoLite2 EULA |
-| Версии IP | только IPv4 | IPv4 и IPv6 |
-| Данные | страна, регион, город | страна, город, ASN (отдельные базы) |
-| Сильные стороны | подробные данные по России и СНГ; названия на русском и английском в каждой записи | весь мир, много языков |
+| Как получить базу | прямая ссылка, без регистрации | бесплатный аккаунт, лицензионный ключ, GeoLite2 EULA |
+| IPv6 | нет | да |
+| Другие данные | City Max: часовые пояса и др. | база ASN, часовые пояса, почтовые индексы |
+| Сильные стороны | Россия и СНГ, русские названия всех стран, регионов и городов | весь мир, много языков |
+| Библиотека для Java/Kotlin | sypexgeo-java (без зависимостей) или sypexgeo-kotlin (только `kotlin-stdlib`) | `com.maxmind.geoip2:geoip2` (с Jackson) |
 
 ## Производительность
 
-Измерено простым циклом: один поток, 4 млн случайных IPv4-строк на метод после 500 000 прогревочных вызовов, OpenJDK 21, Intel Xeon 2,8 ГГц (облачная виртуальная машина). `SxGeo.dat` от января 2025 года и `SxGeoCity.dat` от декабря 2014 года (1,7 млн диапазонов):
+Измерено простым циклом с замером времени (не JMH): один поток, 4 млн вызовов каждого метода по 65 536 случайным IPv4-строкам (первый октет 1–223) после 500 000 прогревочных вызовов, OpenJDK 21, Intel Xeon 2,8 ГГц (облачная виртуальная машина). `SxGeo.dat` от января 2025 года и `SxGeoCity.dat` от декабря 2014 года (1,7 млн диапазонов):
 
 | База | `country()` | `lookup()` |
 |---|---|---|
@@ -448,7 +471,7 @@ String ru = new Locale("", iso).getDisplayCountry(Locale.forLanguageTag("ru")); 
 
 - Только IPv4: формат Sypex Geo не содержит IPv6.
 - Поддерживается только формат 2.2, то есть все актуальные базы.
-- База целиком хранится в памяти (~13 МБ для City).
+- База целиком хранится в памяти (для City — несколько десятков МБ).
 
 ## Сборка и тесты
 
@@ -458,10 +481,8 @@ String ru = new Locale("", iso).getDisplayCountry(Locale.forLanguageTag("ru")); 
 
 Основные тесты строят синтетические базы в памяти и сверяют каждую границу диапазонов с перебором, файлы для них не нужны. Интеграционные тесты используют настоящие базы: положите `SxGeo.dat` и `SxGeoCity.dat` в каталог `testdata/`, иначе эти тесты будут пропущены. В CI базы скачиваются автоматически, не чаще раза в месяц. Выпуск релизов описан в [RELEASING.md](RELEASING.md).
 
-## Лицензия на данные
+## Лицензия и данные
 
-Библиотека не содержит геоданных. Базы Sypex Geo — © BINOVATOR, [sypexgeo.net](https://sypexgeo.net/), они распространяются на условиях, опубликованных там. Прежде чем распространять файлы `.dat` (например, внутри приложения или Docker-образа), проверьте эти условия.
+Библиотека распространяется по лицензии [MIT](LICENSE). Алгоритм основан на официальном `SxGeo.php` (© zapimir, BINOVATOR, лицензия BSD).
 
-## Лицензия
-
-[MIT](LICENSE). Алгоритм основан на официальном `SxGeo.php` (© zapimir, BINOVATOR, лицензия BSD).
+Библиотека не содержит геоданных. Базы Sypex Geo — © BINOVATOR, [sypexgeo.net](https://sypexgeo.net/), они распространяются на условиях, опубликованных там: проверьте их, прежде чем распространять `.dat`-файлы (например, внутри приложения, APK или Docker-образа).
