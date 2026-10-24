@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,33 +21,62 @@ import java.util.Set;
  * Reader for Sypex Geo 2.2 databases ({@code SxGeo.dat}, {@code SxGeoCity.dat}, {@code SxGeoMax.dat}).
  *
  * <p>The whole file is kept in memory; instances are immutable and thread-safe.
- * Port of the official {@code SxGeo.php} 2.2.3.
+ * Port of the official {@code SxGeo.php} 2.2.3, except that an IP equal to the first address of a range
+ * resolves to that range (SxGeo.php sometimes answers with the previous one).
+ *
+ * <p>IP strings are dotted-decimal IPv4: leading and trailing ASCII whitespace ({@code ' '}, {@code '\t'},
+ * {@code '\n'}, {@code '\r'}) is ignored, then exactly four decimal octets 0-255 of 1-3 ASCII digits without
+ * leading zeros are required ({@code "08.8.8.8"} is rejected, like PHP {@code ip2long}). Anything else,
+ * including {@code null}, IPv6 and reserved addresses ({@code 0.*}, {@code 10.*}, {@code 127.*}),
+ * gives an empty result.
+ *
+ * <p>The constructors check the header, the indexes and the record formats and throw
+ * {@link IllegalArgumentException} for data that is not a valid Sypex Geo 2.2 database.
+ * Lookups never throw for a valid database; if a record turns out to be corrupted
+ * (it points outside its section or runs past its end), they throw {@link IllegalStateException}.
  */
 public final class SxGeo {
 
     private static final int HEADER_SIZE = 40;
     private static final int COUNTRY = 0, REGION = 1, CITY = 2;
+    private static final String[] RECORD_NAMES = {"country", "region", "city"};
+    private static final String PACK_CODES = "tTsSmMiIfdcnNb";
     private static final Set<String> INTERNAL_KEYS = Set.of("region_seek", "country_seek", "country_id");
+
+    /** One field of a pack format, e.g. {@code N5:lat}; {@code size} is 0 for NUL-terminated strings. */
+    private record Field(char code, int size, double scale, String name) {
+    }
 
     private final byte[] data;
     private final DbInfo info;
     private final int rangeLen, bIdxLen, mIdxLen, dbItems, idLen, blockLen;
-    private final int maxRegion, maxCity, maxCountry, countrySize;
+    private final int maxRegion, maxCity, maxCountry, regionSize, countrySize, citySize;
     private final Charset charset;
-    private final String[] pack;
+    private final List<List<Field>> packs;
     private final int bIdxStart, mIdxStart, dbStart, regionsStart, citiesStart;
+    private final Map<Integer, Integer> countrySeeks;
 
-    /** Opens a database file; it is read into memory once. */
+    /**
+     * Opens a database file; it is read into memory once.
+     *
+     * @throws IOException              if the file cannot be read
+     * @throws IllegalArgumentException if the file is not a Sypex Geo 2.2 database, is corrupted or truncated
+     */
     public SxGeo(Path path) throws IOException {
-        this(Files.readAllBytes(path));
+        this(Files.readAllBytes(path), 0);
     }
 
     /**
-     * Reads a database from bytes, e.g. a classpath resource.
+     * Reads a database from bytes, e.g. a classpath resource. The array is copied.
      *
-     * @throws IllegalArgumentException if the data is not a Sypex Geo 2.2 database or is truncated
+     * @throws IllegalArgumentException if the data is not a Sypex Geo 2.2 database, is corrupted or truncated
      */
     public SxGeo(byte[] data) {
+        this(data.clone(), 0);
+    }
+
+    /** Takes ownership of {@code data}. */
+    private SxGeo(byte[] data, int owned) {
         this.data = data;
         if (data.length < HEADER_SIZE || !new String(data, 0, 3, StandardCharsets.ISO_8859_1).equals("SxG")) {
             throw new IllegalArgumentException("Not a Sypex Geo database");
@@ -64,17 +95,18 @@ public final class SxGeo {
         idLen = u8(19);
         maxRegion = u16(20);
         maxCity = u16(22);
-        int regionSize = (int) u32(24);
-        int citySize = (int) u32(28);
+        regionSize = (int) u32(24);
+        citySize = (int) u32(28);
         maxCountry = u16(32);
         countrySize = (int) u32(34);
         int packSize = u16(38);
-        if (bIdxLen == 0 || mIdxLen == 0 || rangeLen == 0 || dbItems <= 0 || time == 0 || idLen == 0
+        if (bIdxLen == 0 || mIdxLen == 0 || rangeLen == 0 || dbItems <= 0 || time == 0 || idLen == 0 || idLen > 4
                 || regionSize < 0 || citySize < 0 || countrySize < 0) {
             throw new IllegalArgumentException("Corrupted Sypex Geo database header");
         }
+        // the cities section holds the country records followed by the city records
         if (data.length < (long) HEADER_SIZE + packSize + (bIdxLen + mIdxLen) * 4L
-                + (long) dbItems * (3 + idLen) + regionSize + citySize) {
+                + (long) dbItems * (3 + idLen) + regionSize + countrySize + citySize) {
             throw new IllegalArgumentException("Truncated Sypex Geo database");
         }
 
@@ -84,16 +116,24 @@ public final class SxGeo {
             case 2 -> Charset.forName("windows-1251");
             default -> throw new IllegalArgumentException("Unknown database charset " + u8(9));
         };
-        pack = packSize > 0 ? new String(data, HEADER_SIZE, packSize, StandardCharsets.ISO_8859_1).split("\0", -1) : new String[0];
         blockLen = 3 + idLen;
         bIdxStart = HEADER_SIZE + packSize;
         mIdxStart = bIdxStart + bIdxLen * 4;
         dbStart = mIdxStart + mIdxLen * 4;
         regionsStart = dbStart + dbItems * blockLen;
         citiesStart = regionsStart + regionSize;
+        for (int i = 0; i < bIdxLen; i++) {
+            if (u32(bIdxStart + i * 4) > dbItems || i > 0 && u32(bIdxStart + i * 4) < u32(bIdxStart + (i - 1) * 4)) {
+                throw new IllegalArgumentException("Corrupted Sypex Geo database index");
+            }
+        }
+
+        String[] pack = packSize > 0 ? new String(data, HEADER_SIZE, packSize, StandardCharsets.ISO_8859_1).split("\0", -1) : new String[0];
         if (maxCity != 0 && pack.length < 3) {
             throw new IllegalArgumentException("City database without pack formats");
         }
+        packs = maxCity == 0 ? List.of() : List.of(parsePack(pack[COUNTRY]), parsePack(pack[REGION]), parsePack(pack[CITY]));
+        countrySeeks = maxCity == 0 || maxCountry == 0 ? Map.of() : countrySeeks();
 
         info = new DbInfo("2.2", Instant.ofEpochSecond(time), type < TYPES.size() ? TYPES.get(type) : "unknown (" + type + ")",
                 charset, maxCity > 0, dbItems);
@@ -104,7 +144,11 @@ public final class SxGeo {
         return info;
     }
 
-    /** ISO 3166-1 alpha-2 country code for a dotted IPv4 address. Works with any database. */
+    /**
+     * ISO 3166-1 alpha-2 country code for a dotted IPv4 address. Works with any database.
+     *
+     * @throws IllegalStateException if the database record for the IP is corrupted
+     */
     public Optional<String> country(String ip) {
         OptionalInt id = countryId(ip);
         return id.isPresent() && id.getAsInt() < ISO.size() ? Optional.of(ISO.get(id.getAsInt())) : Optional.empty();
@@ -115,11 +159,15 @@ public final class SxGeo {
         return country(address.getHostAddress());
     }
 
-    /** Sypex Geo country id for a dotted IPv4 address. Works with any database. */
+    /**
+     * Sypex Geo country id for a dotted IPv4 address. Works with any database.
+     *
+     * @throws IllegalStateException if the database record for the IP is corrupted
+     */
     public OptionalInt countryId(String ip) {
-        long ipn = parseIpv4(ip);
-        int num = ipn < 0 ? 0 : locate(ipn);
+        int num = locate(ip);
         if (num == 0) return OptionalInt.empty();
+        // a negative offset in a city database (4-byte id with the high bit set) is corrupted: unpack throws
         int id = maxCity == 0 ? num : countryIdAt(num);
         return id > 0 ? OptionalInt.of(id) : OptionalInt.empty();
     }
@@ -128,26 +176,34 @@ public final class SxGeo {
      * Full information for a dotted IPv4 address: country, region and city with names and coordinates.
      * Empty if the IP is unknown, reserved or malformed.
      * With the country-only database ({@code SxGeo.dat}) only {@link Country#id()} and {@link Country#iso()} are filled.
+     *
+     * <p>The country always matches {@link #countryId(String)}: it is the city's own country, taken from the
+     * database by id when the city has no region or its region belongs to another country (database errors).
+     *
+     * @throws IllegalStateException if the database record for the IP is corrupted
      */
     public Optional<GeoInfo> lookup(String ip) {
-        long ipn = parseIpv4(ip);
-        int num = ipn < 0 ? 0 : locate(ipn);
+        int num = locate(ip);
         if (num == 0) return Optional.empty();
-        if (maxCity == 0) return Optional.of(new GeoInfo(new Country(num, iso(num)), null, null));
+        if (maxCity == 0) return num > 0 ? Optional.of(new GeoInfo(new Country(num, iso(num)), null, null)) : Optional.empty();
 
         if (num < countrySize) {
-            Map<String, Object> c = unpack(COUNTRY, num, maxCountry);
+            Map<String, Object> c = unpack(COUNTRY, num);
             Country country = c == null ? null : toCountry(c);
             return country != null && country.id() > 0 ? Optional.of(new GeoInfo(country, null, null)) : Optional.empty();
         }
-        Map<String, Object> city = unpack(CITY, num, maxCity);
+        Map<String, Object> city = unpack(CITY, num);
         if (city == null) return Optional.empty();
-        Map<String, Object> region = unpack(REGION, intOf(city, "region_seek"), maxRegion);
-        Map<String, Object> country = region == null ? null : unpack(COUNTRY, intOf(region, "country_seek"), maxCountry);
+        Map<String, Object> region = unpack(REGION, intOf(city, "region_seek"));
+        Map<String, Object> country = region == null ? null : unpack(COUNTRY, intOf(region, "country_seek"));
         int countryId = intOf(city, "country_id");
-        // the city's own country_id wins: a few regions point to another country (database errors)
+        if (country == null || intOf(country, "id") != countryId) {
+            // no region, or the region points to another country: the city's own country_id wins
+            Integer seek = countrySeeks.get(countryId);
+            country = seek == null ? null : unpack(COUNTRY, seek);
+        }
         return Optional.of(new GeoInfo(
-                country != null && intOf(country, "id") == countryId ? toCountry(country) : new Country(countryId, iso(countryId)),
+                country != null ? toCountry(country) : new Country(countryId, iso(countryId)),
                 region != null ? toRegion(region) : null,
                 toCity(city)));
     }
@@ -158,57 +214,50 @@ public final class SxGeo {
     }
 
     private int countryIdAt(int seek) {
-        Map<String, Object> m = seek < countrySize ? unpack(COUNTRY, seek, maxCountry) : unpack(CITY, seek, maxCity);
+        Map<String, Object> m = seek < countrySize ? unpack(COUNTRY, seek) : unpack(CITY, seek);
         return m == null ? 0 : intOf(m, seek < countrySize ? "id" : "country_id");
     }
 
     /** Returns the country id (country database) or the record offset (city database); 0 if not found. */
-    private int locate(long ip) {
-        int first = (int) (ip >>> 24);
-        if (first == 0 || first == 10 || first == 127 || first >= bIdxLen) return 0;
+    private int locate(String ip) {
+        long ipn = parseIpv4(ip);
+        int first = (int) (ipn >>> 24);
+        if (ipn < 0 || first == 0 || first == 10 || first == 127 || first >= bIdxLen) return 0;
 
+        // blocks [bMin, bMax) start with the first byte of the IP; the constructor checked bMin <= bMax <= dbItems
         int bMin = (int) u32(bIdxStart + (first - 1) * 4);
         int bMax = (int) u32(bIdxStart + first * 4);
-        int min, max;
+        int min = bMin, max = bMax;
         if (bMax - bMin > rangeLen) {
-            int part = searchIdx(ip, bMin / rangeLen, bMax / rangeLen - 1);
-            min = part > 0 ? part * rangeLen : 0;
-            max = part > mIdxLen ? dbItems : (part + 1) * rangeLen;
-            if (min < bMin) min = bMin;
-            if (max > bMax) max = bMax;
-        } else {
-            min = bMin;
-            max = bMax;
+            // m_idx[i] is the first IP of block (i + 1) * rangeLen; part = number of those entries <= ip
+            int last = Math.min(bMax / rangeLen, mIdxLen) - 1;
+            int part = searchIdx(ipn, bMin / rangeLen, last);
+            min = Math.max(part * rangeLen, bMin);
+            max = part > last ? bMax : Math.min((part + 1) * rangeLen, bMax);
         }
-        return searchDb(ip, min, max);
+        return searchDb(ipn, min, max);
     }
 
     private int searchIdx(long ip, int min, int max) {
         while (max - min > 8) {
             int offset = (min + max) >>> 1;
-            if (ip > u32(mIdxStart + offset * 4)) min = offset;
+            if (ip >= u32(mIdxStart + offset * 4)) min = offset;
             else max = offset;
         }
-        while (ip > u32(mIdxStart + min * 4) && min++ < max) {
-            // linear tail
-        }
+        while (min <= max && ip >= u32(mIdxStart + min * 4)) min++;
         return min;
     }
 
+    /** Id of the last block starting at or before ip: blocks cover the address space without gaps. */
     private int searchDb(long ip, int min, int max) {
-        if (max - min > 1) {
-            long low = ip & 0xFFFFFF; // blocks inside a first-byte range store only the 3 low bytes
-            while (max - min > 8) {
-                int offset = (min + max) >>> 1;
-                if (low > u24(dbStart + offset * blockLen)) min = offset;
-                else max = offset;
-            }
-            while (low >= u24(dbStart + min * blockLen) && ++min < max) {
-                // linear tail
-            }
-        } else {
-            min++;
+        long low = ip & 0xFFFFFF; // blocks inside a first-byte range store only the 3 low bytes
+        while (max - min > 8) {
+            int offset = (min + max) >>> 1;
+            if (low >= u24(dbStart + offset * blockLen)) min = offset;
+            else max = offset;
         }
+        while (min < max && low >= u24(dbStart + min * blockLen)) min++;
+        if (min == 0) return 0;
         int id = 0;
         int pos = dbStart + min * blockLen - idLen;
         for (int i = 0; i < idLen; i++) id = (id << 8) | u8(pos + i);
@@ -216,44 +265,104 @@ public final class SxGeo {
     }
 
     /** Decodes a record using the database pack format. Offset 0 means "no record". */
-    private Map<String, Object> unpack(int type, int seek, int maxLen) {
-        if (seek == 0 || maxLen == 0) return null;
-        int pos = (type == REGION ? regionsStart : citiesStart) + seek;
+    private Map<String, Object> unpack(int type, int seek) {
+        if (seek == 0 || (type == COUNTRY ? maxCountry : type == REGION ? maxRegion : maxCity) == 0) return null;
+        int start = type == REGION ? regionsStart : citiesStart;
+        int size = type == REGION ? regionSize : type == COUNTRY ? countrySize : countrySize + citySize;
+        if (seek < 0 || seek >= size) throw corrupted(type, seek);
         Map<String, Object> result = new LinkedHashMap<>();
-        for (String field : pack[type].split("/")) {
-            int colon = field.indexOf(':');
-            String code = field.substring(0, colon);
-            String name = field.substring(colon + 1);
-            Object value;
-            switch (code.charAt(0)) {
-                case 't' -> { value = (int) data[pos]; pos += 1; }
-                case 'T' -> { value = u8(pos); pos += 1; }
-                case 's' -> { value = (int) (short) le(pos, 2); pos += 2; }
-                case 'S' -> { value = (int) le(pos, 2); pos += 2; }
-                case 'm' -> { value = (int) le(pos, 3) << 8 >> 8; pos += 3; }
-                case 'M' -> { value = (int) le(pos, 3); pos += 3; }
-                case 'i' -> { value = (int) le(pos, 4); pos += 4; }
-                case 'I' -> { value = le(pos, 4); pos += 4; }
-                case 'f' -> { value = Float.intBitsToFloat((int) le(pos, 4)); pos += 4; }
-                case 'd' -> { value = Double.longBitsToDouble(le(pos, 8)); pos += 8; }
-                case 'n' -> { value = (short) le(pos, 2) / pow10(code); pos += 2; }
-                case 'N' -> { value = (int) le(pos, 4) / pow10(code); pos += 4; }
-                case 'c' -> {
-                    int len = Integer.parseInt(code.substring(1));
-                    value = new String(data, pos, len, charset).replaceFirst(" +$", "");
-                    pos += len;
-                }
-                case 'b' -> {
-                    int end = pos;
-                    while (data[end] != 0) end++;
-                    value = new String(data, pos, end - pos, charset);
-                    pos = end + 1;
-                }
-                default -> throw new IllegalStateException("Unknown pack type '" + code + "' in database");
-            }
-            result.put(name, value);
-        }
+        decode(type, start + seek, start + size, result);
         return result;
+    }
+
+    /** Decodes the record at {@code pos} into {@code result}; returns the position after it. */
+    private int decode(int type, int pos, int end, Map<String, Object> result) {
+        for (Field field : packs.get(type)) {
+            int size = field.size();
+            if (field.code() == 'b') {
+                int nul = pos;
+                while (nul < end && data[nul] != 0) nul++;
+                size = nul - pos + 1;
+            }
+            if (size > end - pos) throw corrupted(type, pos - (type == REGION ? regionsStart : citiesStart));
+            Object value = switch (field.code()) {
+                case 't' -> (int) data[pos];
+                case 'T' -> u8(pos);
+                case 's' -> (int) (short) le(pos, 2);
+                case 'S' -> (int) le(pos, 2);
+                case 'm' -> (int) le(pos, 3) << 8 >> 8;
+                case 'M' -> (int) le(pos, 3);
+                case 'i' -> (int) le(pos, 4);
+                case 'I' -> le(pos, 4);
+                case 'f' -> Float.intBitsToFloat((int) le(pos, 4));
+                case 'd' -> Double.longBitsToDouble(le(pos, 8));
+                case 'n' -> (short) le(pos, 2) / field.scale();
+                case 'N' -> (int) le(pos, 4) / field.scale();
+                case 'c' -> {
+                    int to = pos + size;
+                    while (to > pos && data[to - 1] == ' ') to--; // like PHP rtrim($s, ' ')
+                    yield new String(data, pos, to - pos, charset);
+                }
+                default -> new String(data, pos, size - 1, charset); // 'b'
+            };
+            result.put(field.name(), value);
+            pos += size;
+        }
+        return pos;
+    }
+
+    /** Country id -> offset of its record, from walking the country records at the start of the cities section. */
+    private Map<Integer, Integer> countrySeeks() {
+        Map<Integer, Integer> seeks = new HashMap<>();
+        int end = citiesStart + countrySize;
+        try {
+            for (int pos = citiesStart + 1, next; pos < end; pos = next) {
+                Map<String, Object> country = new HashMap<>();
+                next = decode(COUNTRY, pos, end, country);
+                if (next == pos) break;
+                if (intOf(country, "id") > 0) seeks.putIfAbsent(intOf(country, "id"), pos - citiesStart);
+            }
+        } catch (IllegalStateException e) {
+            throw new IllegalArgumentException("Corrupted Sypex Geo database: invalid country records", e);
+        }
+        return Map.copyOf(seeks);
+    }
+
+    private static IllegalStateException corrupted(int type, int seek) {
+        return new IllegalStateException("Corrupted Sypex Geo database: " + RECORD_NAMES[type] + " record at offset " + seek + " is out of bounds");
+    }
+
+    /** Parses a pack format such as {@code M:region_seek/T:country_id/N5:lat/b:name_ru}. */
+    private static List<Field> parsePack(String pack) {
+        List<Field> fields = new ArrayList<>();
+        for (String token : pack.split("/")) {
+            if (token.isEmpty()) continue;
+            int colon = token.indexOf(':');
+            char code = token.charAt(0);
+            String digits = colon < 1 ? "" : token.substring(1, colon);
+            boolean digitsOk = digits.chars().allMatch(c -> c >= '0' && c <= '9')
+                    && (code == 'c' ? !digits.isEmpty() : code == 'n' || code == 'N' || digits.isEmpty());
+            int n = 0;
+            try {
+                if (!digits.isEmpty()) n = Integer.parseInt(digits);
+            } catch (NumberFormatException e) {
+                digitsOk = false;
+            }
+            if (colon < 1 || PACK_CODES.indexOf(code) < 0 || !digitsOk) {
+                throw new IllegalArgumentException("Invalid pack format '" + token + "' in Sypex Geo database");
+            }
+            int size = switch (code) {
+                case 't', 'T' -> 1;
+                case 's', 'S', 'n' -> 2;
+                case 'm', 'M' -> 3;
+                case 'd' -> 8;
+                case 'c' -> n;
+                case 'b' -> 0;
+                default -> 4;
+            };
+            fields.add(new Field(code, size, Math.pow(10, n), token.substring(colon + 1)));
+        }
+        return List.copyOf(fields);
     }
 
     private int u8(int pos) {
@@ -279,26 +388,28 @@ public final class SxGeo {
         return v;
     }
 
-    private static double pow10(String code) {
-        return Math.pow(10, Integer.parseInt(code.substring(1)));
-    }
-
     /** Returns the address as an unsigned 32-bit number, or -1 if it is not a dotted IPv4 address. */
     private static long parseIpv4(String ip) {
         if (ip == null) return -1;
-        String[] parts = ip.trim().split("\\.", -1);
-        if (parts.length != 4) return -1;
+        int pos = 0, end = ip.length();
+        while (pos < end && isSpace(ip.charAt(pos))) pos++;
+        while (end > pos && isSpace(ip.charAt(end - 1))) end--;
         long result = 0;
-        for (String part : parts) {
-            if (part.isEmpty() || part.length() > 3) return -1;
-            for (int i = 0; i < part.length(); i++) {
-                if (part.charAt(i) < '0' || part.charAt(i) > '9') return -1;
+        for (int octet = 0; octet < 4; octet++) {
+            if (octet > 0 && (pos >= end || ip.charAt(pos++) != '.')) return -1;
+            int start = pos, value = 0;
+            while (pos < end && pos - start < 4 && ip.charAt(pos) >= '0' && ip.charAt(pos) <= '9') {
+                value = value * 10 + ip.charAt(pos++) - '0';
             }
-            int octet = Integer.parseInt(part);
-            if (octet > 255) return -1;
-            result = (result << 8) | octet;
+            int len = pos - start;
+            if (len == 0 || len > 3 || value > 255 || len > 1 && ip.charAt(start) == '0') return -1;
+            result = (result << 8) | value;
         }
-        return result;
+        return pos == end ? result : -1;
+    }
+
+    private static boolean isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }
 
     private static String iso(int countryId) {

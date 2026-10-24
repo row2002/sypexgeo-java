@@ -5,7 +5,8 @@ import java.util.Map;
 /**
  * City record.
  *
- * @param fields every field stored in the database, including extra City Max fields
+ * @param fields all fields of the record except internal links ({@code region_seek}, {@code country_seek},
+ *               {@code country_id}), including extra City Max fields; unmodifiable
  */
 public record City(int id, String nameRu, String nameEn, double lat, double lon, Map<String, Object> fields) {
 }
