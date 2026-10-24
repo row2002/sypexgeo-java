@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,6 +18,7 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -551,6 +553,8 @@ class SyntheticDbTest {
         assertEquals("Kyiv", expected.orElseThrow().city().nameEn());
         assertEquals(expected, new SxGeo(file.toFile()).lookup("93.73.35.74"));
         assertThrows(NoSuchFileException.class, () -> new SxGeo(dir.resolve("missing.dat").toFile()));
+        IOException invalid = assertThrows(IOException.class, () -> new SxGeo(new File("bad\0.dat")));
+        assertEquals("bad\0.dat: " + ((InvalidPathException) invalid.getCause()).getReason(), invalid.getMessage());
 
         boolean[] closed = {false};
         byte[] prefixed = new byte[data.length + 3];
@@ -820,6 +824,36 @@ class SyntheticDbTest {
                     if (full instanceof OptionalInt || quick instanceof String) assertEquals(full, quick, ip);
                 }
             }
+        }
+    }
+
+    @Test
+    void countryFastPathKeepsBoundsChecksForMultiByteIds() throws ReflectiveOperationException {
+        SyntheticDb spec = small(); // a 2-byte id at offset 0 of a country record, a 4-byte country_id at offset 4 of a city record
+        spec.pack = new String[]{"S:id/c2:iso/n2:lat/n2:lon/b:name_ru/b:name_en/c6:tz", SyntheticDb.CITY_PACK[1],
+                "I:region_seek/I:country_id/M:id/N5:lat/N5:lon/b:name_ru/b:name_en/c4:code"};
+        spec.build();
+        int countryEnd = spec.countrySize, cityEnd = spec.countrySize + spec.citySize;
+        for (int back = 1; back <= 8; back++) {
+            spec.ranges.add(new SyntheticDb.Range(ip("4.0." + back + ".0"), ip("4.0." + back + ".255"), "raw:" + (cityEnd - back)));
+        }
+        for (int back = 1; back <= 2; back++) {
+            spec.ranges.add(new SyntheticDb.Range(ip("5.0." + back + ".0"), ip("5.0." + back + ".255"), "raw:" + (countryEnd - back)));
+        }
+        SxGeo db = new SxGeo(spec.build());
+        assertArrayEquals(new boolean[]{true, true}, fastPath(db));
+        assertMatches(spec, db, List.of(ip("1.0.0.1"), ip("2.0.0.1"), ip("93.73.35.74")));
+        // the id does not fit before the end of the section: the same exception as lookup(), never an index error
+        for (String ip : Stream.concat(Stream.of("5.0.1.1"), Stream.iterate(1, b -> b <= 7, b -> b + 1).map(b -> "4.0." + b + ".1")).toList()) {
+            String expected = assertThrows(IllegalStateException.class, () -> db.lookup(ip)).getMessage();
+            assertTrue(expected.startsWith("Corrupted Sypex Geo database: "), expected);
+            assertEquals(expected, assertThrows(IllegalStateException.class, () -> db.country(ip)).getMessage(), ip);
+            assertEquals(expected, assertThrows(IllegalStateException.class, () -> db.countryId(ip)).getMessage(), ip);
+        }
+        // here the id fits, the rest of the record does not
+        for (String ip : List.of("4.0.8.1", "5.0.2.1")) {
+            assertThrows(IllegalStateException.class, () -> db.lookup(ip));
+            db.countryId(ip);
         }
     }
 

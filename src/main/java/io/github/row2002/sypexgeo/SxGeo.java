@@ -10,6 +10,7 @@ import java.net.InetAddress;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -43,7 +44,9 @@ import java.util.Set;
  * common mistakes (a ZIP archive, an HTML error page, a MaxMind {@code .mmdb} file, an empty file) and, for the
  * {@link Path} and {@link File} constructors, starts with the file name.
  * Lookups never throw for a valid database; if a record turns out to be corrupted
- * (it points outside its section or runs past its end), they throw {@link IllegalStateException}.
+ * (it points outside its section or runs past its end), {@code lookup()} throws {@link IllegalStateException}.
+ * {@code country()} and {@code countryId()} decode only the country id, so they may miss such damage and return
+ * the id read from a record for which {@code lookup()} throws.
  */
 public final class SxGeo {
 
@@ -86,12 +89,12 @@ public final class SxGeo {
     /**
      * Opens a database file; it is read into memory once.
      *
-     * @throws IOException              if the file cannot be read
+     * @throws IOException              if the file cannot be read or the path is invalid (e.g. contains a NUL character)
      * @throws IllegalArgumentException if the file is not a Sypex Geo 2.2 database, is corrupted or truncated;
      *                                  the message starts with the path
      */
     public SxGeo(File file) throws IOException {
-        this(Files.readAllBytes(file.toPath()), file);
+        this(Files.readAllBytes(toPath(file)), file);
     }
 
     /**
@@ -111,6 +114,15 @@ public final class SxGeo {
      */
     public SxGeo(byte[] data) {
         this(data.clone(), null);
+    }
+
+    /** {@link File#toPath()}, with an invalid path (e.g. a NUL character) reported as an {@link IOException}. */
+    private static Path toPath(File file) throws IOException {
+        try {
+            return file.toPath();
+        } catch (InvalidPathException e) {
+            throw new IOException(file.getPath() + ": " + e.getReason(), e);
+        }
     }
 
     /** Takes ownership of {@code data}; {@code source} (a path) prefixes the messages of the exceptions. */
@@ -215,7 +227,8 @@ public final class SxGeo {
     /**
      * ISO 3166-1 alpha-2 country code for a dotted IPv4 address. Works with any database.
      *
-     * @throws IllegalStateException if the database record for the IP is corrupted
+     * @throws IllegalStateException if the database record for the IP is corrupted so that its country id cannot be
+     *                               read; unlike {@link #lookup(String)}, other damage to the record may go unnoticed
      */
     public Optional<String> country(@Nullable String ip) {
         return iso(countryIdOf(parseIpv4(ip)));
@@ -224,7 +237,8 @@ public final class SxGeo {
     /**
      * Same as {@link #country(String)} for an {@link InetAddress}; an {@link java.net.Inet6Address} gives an empty result.
      *
-     * @throws IllegalStateException if the database record for the IP is corrupted
+     * @throws IllegalStateException if the database record for the IP is corrupted so that its country id cannot be
+     *                               read; unlike {@link #lookup(String)}, other damage to the record may go unnoticed
      */
     public Optional<String> country(InetAddress address) {
         return iso(countryIdOf(ipv4(address)));
@@ -238,7 +252,8 @@ public final class SxGeo {
     /**
      * Sypex Geo country id for a dotted IPv4 address. Works with any database.
      *
-     * @throws IllegalStateException if the database record for the IP is corrupted
+     * @throws IllegalStateException if the database record for the IP is corrupted so that its country id cannot be
+     *                               read; unlike {@link #lookup(String)}, other damage to the record may go unnoticed
      */
     public OptionalInt countryId(@Nullable String ip) {
         int id = countryIdOf(parseIpv4(ip));
@@ -248,7 +263,8 @@ public final class SxGeo {
     /**
      * Same as {@link #countryId(String)} for an {@link InetAddress}; an {@link java.net.Inet6Address} gives an empty result.
      *
-     * @throws IllegalStateException if the database record for the IP is corrupted
+     * @throws IllegalStateException if the database record for the IP is corrupted so that its country id cannot be
+     *                               read; unlike {@link #lookup(String)}, other damage to the record may go unnoticed
      */
     public OptionalInt countryId(InetAddress address) {
         int id = countryIdOf(ipv4(address));
@@ -320,7 +336,7 @@ public final class SxGeo {
         // fast path: read only the id at its fixed offset; the full decoding would not fail before reaching it either
         Field field = index < 0 ? null : packs.get(type).get(index);
         if (field != null && (long) pos + field.offset() + field.size() <= sectionEnd(type)) {
-            return ((Number) value(field, pos + field.offset(), field.size())).intValue();
+            return intValue(field, pos + field.offset());
         }
         Map<String, Object> m = unpack(type, num); // throws for a record running past its section, like lookup()
         return m == null ? 0 : intOf(m, type == COUNTRY ? "id" : "country_id");
@@ -428,6 +444,18 @@ public final class SxGeo {
                 yield new String(data, pos, to - pos, charset);
             }
             default -> new String(data, pos, size - 1, charset); // 'b'
+        };
+    }
+
+    /** The numeric field at {@code pos} as an int, the same as {@code ((Number) value(...)).intValue()}; integers without boxing. */
+    private int intValue(Field field, int pos) {
+        return switch (field.code()) {
+            case 't' -> data[pos];
+            case 'T' -> u8(pos);
+            case 's' -> (short) le(pos, 2);
+            case 'm' -> (int) le(pos, 3) << 8 >> 8;
+            case 'S', 'M', 'i', 'I' -> (int) le(pos, field.size());
+            default -> ((Number) value(field, pos, field.size())).intValue();
         };
     }
 
