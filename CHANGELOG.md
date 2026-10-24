@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - Unreleased
+## [1.1.0] - 2026-10-24
 
 ### Fixed
 
@@ -51,5 +51,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First release: reader for Sypex Geo 2.2 databases (`SxGeo.dat`, `SxGeoCity.dat`, `SxGeoMax.dat`) with
   `country()`, `countryId()`, `lookup()` and `info()`.
 
-[1.1.0]: https://github.com/row2002/sypexgeo-java/compare/1.0.0...HEAD
+[1.1.0]: https://github.com/row2002/sypexgeo-java/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/row2002/sypexgeo-java/releases/tag/1.0.0
