@@ -6,9 +6,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,6 +22,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -30,7 +36,12 @@ import static org.junit.jupiter.api.Assertions.*;
 class SyntheticDbTest {
 
     record Config(String name, boolean city, long seed, int ranges, int rangeLen, String split, int charset, int idLen,
-                  boolean sentinel, boolean maxPack) {
+                  boolean sentinel, boolean maxPack, String[] pack) {
+        Config(String name, boolean city, long seed, int ranges, int rangeLen, String split, int charset, int idLen,
+               boolean sentinel, boolean maxPack) {
+            this(name, city, seed, ranges, rangeLen, split, charset, idLen, sentinel, maxPack, null);
+        }
+
         SyntheticDb db() {
             SyntheticDb db = new SyntheticDb(city);
             db.rangeLen = rangeLen;
@@ -38,7 +49,9 @@ class SyntheticDbTest {
             db.charset = charset;
             db.idLen = idLen;
             db.sentinel = sentinel;
-            return db.generate(seed, ranges, maxPack);
+            db.generate(seed, ranges, maxPack);
+            if (pack != null) db.pack = pack;
+            return db;
         }
 
         @Override
@@ -59,7 +72,35 @@ class SyntheticDbTest {
                 new Config("city, latin1, every pack code", true, 7, 350, 12, "always", 1, 3, true, true),
                 new Config("city, empty buckets", true, 8, 300, 16, "never", 0, 3, true, false),
                 new Config("city, range_len 4, cp1251, every pack code", true, 9, 400, 4, "never", 2, 3, false, true),
-                new Config("city, id_len 2", true, 10, 300, 7, "empty_only", 0, 2, true, false));
+                new Config("city, id_len 2", true, 10, 300, 7, "empty_only", 0, 2, true, false),
+                new Config("city, ids after a string (no country fast path)", true, 12, 300, 8, "always", 0, 3, true, false, SLOW_PACK));
+    }
+
+    /** Country id and city country_id after a NUL-terminated string: their offsets are not fixed. */
+    static final String[] SLOW_PACK = {"b:name_ru/T:id/c2:iso/n2:lat/n2:lon/b:name_en", SyntheticDb.CITY_PACK[1],
+            "M:region_seek/b:name_ru/T:country_id/M:id/N5:lat/N5:lon/b:name_en"};
+
+    /** Whether country()/countryId() read the id directly (the private fast path) for country and city records. */
+    private static boolean[] fastPath(SxGeo db) throws ReflectiveOperationException {
+        boolean[] result = new boolean[2];
+        String[] names = {"countryIdIndex", "cityCountryIdIndex"};
+        for (int i = 0; i < 2; i++) {
+            java.lang.reflect.Field f = SxGeo.class.getDeclaredField(names[i]);
+            f.setAccessible(true);
+            result[i] = f.getInt(db) >= 0;
+        }
+        return result;
+    }
+
+    /** The same database with the country fast path switched off. */
+    private static SxGeo withoutFastPath(byte[] data) throws ReflectiveOperationException {
+        SxGeo db = new SxGeo(data);
+        for (String name : new String[]{"countryIdIndex", "cityCountryIdIndex"}) {
+            java.lang.reflect.Field f = SxGeo.class.getDeclaredField(name);
+            f.setAccessible(true);
+            f.setInt(db, -1);
+        }
+        return db;
     }
 
     private static void assertMatches(SyntheticDb spec, SxGeo db, List<Long> probes) {
@@ -69,6 +110,18 @@ class SyntheticDbTest {
             assertEquals(e.countryId(), db.countryId(s), s);
             assertEquals(e.country(), db.country(s), s);
             assertEquals(e.lookup(), db.lookup(s), s);
+            InetAddress address = inet(ip);
+            assertEquals(e.countryId(), db.countryId(address), s);
+            assertEquals(e.country(), db.country(address), s);
+            assertEquals(e.lookup(), db.lookup(address), s);
+        }
+    }
+
+    private static InetAddress inet(long ip) {
+        try {
+            return InetAddress.getByAddress(new byte[]{(byte) (ip >> 24), (byte) (ip >> 16), (byte) (ip >> 8), (byte) ip});
+        } catch (UnknownHostException e) {
+            throw new AssertionError(e);
         }
     }
 
@@ -233,7 +286,7 @@ class SyntheticDbTest {
         for (String ip : new String[]{"08.8.8.8", "8.08.8.8", "8.8.8.08", "010.0.0.1", "00.1.2.3", "1.2.3.00", "1.2.3.004",
                 "0.0.0.0", "10.1.2.3", "127.0.0.1", "224.0.0.1", "255.255.255.255", "", " ", "1.2.3", "1.2.3.4.5", "256.1.1.1",
                 "1.2.3.256", "1000.1.1.1", "-1.2.3.4", "+1.2.3.4", "1..2.3", "1.2.3.", ".1.2.3", "a.b.c.d", "::1", "2001:db8::1",
-                "::ffff:1.2.3.4", "example.com", "8.8.8.8, 10.0.0.1", "8.8.8.8/32", "8.8.8.8:80", "8. 8.8.8", "8.8.8.8\0",
+                "example.com", "8.8.8.8, 10.0.0.1", "8.8.8.8/32", "8.8.8.8:80", "8. 8.8.8", "8.8.8.8\0",
                 "\u000b8.8.8.8", "\f8.8.8.8", "\u00a08.8.8.8", "8.8.8.8\u2003", "８.8.8.8", "٨.8.8.8", "0x8.8.8.8", "8.8.8.8 x", null}) {
             assertEquals(Optional.empty(), db.country(ip), String.valueOf(ip));
             assertEquals(OptionalInt.empty(), db.countryId(ip), String.valueOf(ip));
@@ -380,7 +433,8 @@ class SyntheticDbTest {
             byte[] full = c.build();
             assertTrue(c.citySeek.get("moscow") > c.citySeek.get("kyiv"));
             SxGeo db = new SxGeo(Arrays.copyOf(patchInt(full, 28, c.citySize - 1), full.length - 1));
-            assertCorrupted(db, "2.0.0.1", true);
+            assertCorrupted(db, "2.0.0.1", false);
+            assertEquals(Optional.of("RU"), db.country("2.0.0.1")); // reads only country_id, which is intact
             assertEquals("Kyiv", db.lookup("93.73.35.74").orElseThrow().city().nameEn());
         }
 
@@ -485,5 +539,296 @@ class SyntheticDbTest {
         Arrays.fill(data, (byte) 0);
         assertEquals(before, db.lookup("93.73.35.74"));
         assertEquals("Kyiv", before.orElseThrow().city().nameEn());
+    }
+
+    // ---------------------------------------------------------------- other inputs
+
+    @Test
+    void opensFileAndInputStream(@TempDir Path dir) throws IOException {
+        byte[] data = small().build();
+        Path file = Files.write(dir.resolve("SxGeoCity.dat"), data);
+        Optional<GeoInfo> expected = new SxGeo(data).lookup("93.73.35.74");
+        assertEquals("Kyiv", expected.orElseThrow().city().nameEn());
+        assertEquals(expected, new SxGeo(file.toFile()).lookup("93.73.35.74"));
+        assertThrows(NoSuchFileException.class, () -> new SxGeo(dir.resolve("missing.dat").toFile()));
+
+        boolean[] closed = {false};
+        byte[] prefixed = new byte[data.length + 3];
+        System.arraycopy(data, 0, prefixed, 3, data.length);
+        InputStream in = new FilterInputStream(new ByteArrayInputStream(prefixed)) {
+            @Override
+            public void close() throws IOException {
+                closed[0] = true;
+                super.close();
+            }
+        };
+        assertEquals(3, in.skip(3));
+        assertEquals(expected, new SxGeo(in).lookup("93.73.35.74")); // reads from the current position to the end
+        assertFalse(closed[0], "the stream belongs to the caller");
+        assertEquals(-1, in.read());
+        try (InputStream file2 = Files.newInputStream(file)) {
+            assertEquals(expected, new SxGeo(file2).lookup("93.73.35.74"));
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> new SxGeo(new ByteArrayInputStream(new byte[0])));
+        assertEquals("Not a Sypex Geo database: file is empty or too short (0 bytes)", e.getMessage());
+    }
+
+    @Test
+    void inetAddresses() throws IOException {
+        SxGeo db = new SxGeo(small().build());
+        InetAddress kyiv = InetAddress.getByAddress(new byte[]{93, 73, 35, 74});
+        assertEquals(db.lookup("93.73.35.74"), db.lookup(kyiv));
+        assertEquals("Kyiv", db.lookup(kyiv).orElseThrow().city().nameEn());
+        assertEquals(Optional.of("UA"), db.country(kyiv));
+        assertEquals(OptionalInt.of(222), db.countryId(kyiv));
+        assertEquals(db.lookup(kyiv), db.lookup((Inet4Address) kyiv));
+        assertEquals(Optional.of("UA"), db.country((Inet4Address) kyiv));
+        // the JDK returns an Inet4Address for an IPv4-mapped IPv6 address
+        InetAddress mapped = InetAddress.getByName("::ffff:93.73.35.74");
+        assertInstanceOf(Inet4Address.class, mapped);
+        assertEquals(Optional.of("UA"), db.country(mapped));
+        // high bytes are unsigned: 200.x is not a negative number
+        assertEquals(Optional.empty(), db.lookup(InetAddress.getByAddress(new byte[]{(byte) 200, 1, 2, 3})));
+        assertEquals(OptionalInt.empty(), db.countryId(InetAddress.getByAddress(new byte[]{127, 0, 0, 1})));
+        for (InetAddress v6 : new InetAddress[]{InetAddress.getByName("2001:db8::1"), InetAddress.getByName("::1"),
+                InetAddress.getByName("::93.73.35.74"), // IPv4-compatible, not mapped
+                Inet6Address.getByAddress(null, new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, 93, 73, 35, 74}, -1)}) {
+            assertInstanceOf(Inet6Address.class, v6);
+            assertEquals(Optional.empty(), db.lookup(v6), v6.toString());
+            assertEquals(Optional.empty(), db.country(v6), v6.toString());
+            assertEquals(OptionalInt.empty(), db.countryId(v6), v6.toString());
+        }
+    }
+
+    @Test
+    void ipv4MappedIpv6Strings() {
+        SxGeo db = new SxGeo(small().build());
+        for (String ip : new String[]{"::ffff:93.73.35.74", "::FFFF:93.73.35.74", "::fFfF:93.73.35.74", " ::ffff:93.73.35.74\r\n"}) {
+            assertEquals(Optional.of("UA"), db.country(ip), ip);
+            assertEquals(OptionalInt.of(222), db.countryId(ip), ip);
+            assertEquals(db.lookup("93.73.35.74"), db.lookup(ip), ip);
+        }
+        for (String ip : new String[]{"::ffff:", "::ffff:093.73.35.74", "::ffff:93.73.35", "::ffff: 93.73.35.74", "::ffff:93.73.35.74:80",
+                "::ffff::93.73.35.74", "::ffff:::93.73.35.74", ":ffff:93.73.35.74", "::fff:93.73.35.74", "ffff:93.73.35.74",
+                "0:0:0:0:0:ffff:93.73.35.74", "::ffff:0:93.73.35.74", "[::ffff:93.73.35.74]", "::ffff:5d49:234a", "::93.73.35.74",
+                "::ffff:::ffff:93.73.35.74", "93.73.35.74:80", "::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:93.73.35.74.5",
+                " ::ffff:\t93.73.35.74", "::\uFF46fff:93.73.35.74", "::ffff:93.73.35.74/32", "::ffff:93.73.35.74%eth0"}) {
+            assertEquals(Optional.empty(), db.country(ip), ip);
+            assertEquals(OptionalInt.empty(), db.countryId(ip), ip);
+            assertEquals(Optional.empty(), db.lookup(ip), ip);
+        }
+    }
+
+    // ---------------------------------------------------------------- constructor diagnostics
+
+    private static String message(byte[] data) {
+        return assertThrows(IllegalArgumentException.class, () -> new SxGeo(data)).getMessage();
+    }
+
+    @Test
+    void explainsWhatTheDataIsInstead() {
+        String not = "Not a Sypex Geo database";
+        byte[] zip = Arrays.copyOf(new byte[]{'P', 'K', 3, 4, 20, 0}, 500);
+        assertEquals(not + ": this is a ZIP archive - unzip it and pass the .dat file", message(zip));
+        assertEquals(not + ": this is a ZIP archive - unzip it and pass the .dat file", message(new byte[]{'P', 'K', 3, 4}));
+        String html = not + ": looks like an HTML page - the download probably failed";
+        for (String page : new String[]{"<!DOCTYPE html><html><body>502 Bad Gateway</body></html>", "<html>", "<",
+                "﻿<!doctype html>\n<html lang=\"ru\">" + "x".repeat(100), " \r\n\t<html>", "﻿\n\n<?xml version=\"1.0\"?>"}) {
+            assertEquals(html, message(page.getBytes(StandardCharsets.UTF_8)), page);
+        }
+        byte[] mmdb = new byte[300_000];
+        new Random(3).nextBytes(mmdb);
+        mmdb[0] = 0;
+        byte[] marker = "«ÍïMaxMind.com".getBytes(StandardCharsets.ISO_8859_1);
+        System.arraycopy(marker, 0, mmdb, mmdb.length - 128 * 1024, marker.length);
+        assertEquals(not + ": this is a MaxMind .mmdb file", message(mmdb));
+        System.arraycopy(new byte[marker.length], 0, mmdb, mmdb.length - 128 * 1024, marker.length);
+        System.arraycopy(marker, 0, mmdb, mmdb.length - 128 * 1024 - 1, marker.length); // starts before the last 128 KiB
+        assertEquals(not, message(mmdb));
+        assertEquals(not + ": this is a MaxMind .mmdb file", message(Arrays.copyOf(marker, marker.length + 5)));
+
+        assertEquals(not + ": file is empty or too short (0 bytes)", message(new byte[0]));
+        assertEquals(not + ": file is empty or too short (3 bytes)", message("SxG".getBytes(StandardCharsets.US_ASCII)));
+        assertEquals(not + ": file is empty or too short (39 bytes)", message(Arrays.copyOf(small().build(), 39)));
+        assertEquals(not + ": file is empty or too short (2 bytes)", message("PK".getBytes(StandardCharsets.US_ASCII)));
+        assertEquals(not + ": file is empty or too short (5 bytes)", message(" \n \n ".getBytes(StandardCharsets.US_ASCII)));
+        assertEquals(not, message(new byte[100]));
+        assertEquals(not, message(("Sxg" + "x".repeat(50)).getBytes(StandardCharsets.US_ASCII)));
+        assertEquals(not, message(("text <html>" + "x".repeat(50)).getBytes(StandardCharsets.US_ASCII)));
+        assertEquals("Truncated Sypex Geo database", message(Arrays.copyOf(small().build(), 60)));
+    }
+
+    @Test
+    void fileConstructorsPrefixMessagesWithThePath(@TempDir Path dir) throws IOException {
+        Path zip = Files.write(dir.resolve("SxGeoCity.zip"), Arrays.copyOf(new byte[]{'P', 'K', 3, 4}, 100));
+        String zipMessage = zip + ": Not a Sypex Geo database: this is a ZIP archive - unzip it and pass the .dat file";
+        assertEquals(zipMessage, assertThrows(IllegalArgumentException.class, () -> new SxGeo(zip)).getMessage());
+        assertEquals(zipMessage, assertThrows(IllegalArgumentException.class, () -> new SxGeo(zip.toFile())).getMessage());
+        Path empty = Files.write(dir.resolve("empty.dat"), new byte[0]);
+        assertEquals(empty + ": Not a Sypex Geo database: file is empty or too short (0 bytes)",
+                assertThrows(IllegalArgumentException.class, () -> new SxGeo(empty)).getMessage());
+        Path truncated = Files.write(dir.resolve("truncated.dat"), Arrays.copyOf(small().build(), 60));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> new SxGeo(truncated.toFile()));
+        assertEquals(truncated + ": Truncated Sypex Geo database", e.getMessage());
+        assertEquals("Truncated Sypex Geo database", e.getCause().getMessage());
+        Path relative = Path.of("build", "tmp", "sypexgeo-test-" + System.nanoTime() + ".dat");
+        Files.createDirectories(relative.getParent());
+        try {
+            Files.write(relative, "<html>".getBytes(StandardCharsets.US_ASCII));
+            assertEquals(relative + ": Not a Sypex Geo database: looks like an HTML page - the download probably failed",
+                    assertThrows(IllegalArgumentException.class, () -> new SxGeo(relative.toFile())).getMessage());
+        } finally {
+            Files.delete(relative);
+        }
+        // no path for bytes and streams
+        assertEquals("Not a Sypex Geo database: this is a ZIP archive - unzip it and pass the .dat file",
+                assertThrows(IllegalArgumentException.class, () -> new SxGeo(Files.newInputStream(zip))).getMessage());
+    }
+
+    // ---------------------------------------------------------------- names
+
+    @Test
+    void nameForLocale() {
+        Country both = new Country(185, "RU", "Россия", "Russia", 0, 0, Map.of());
+        for (Locale ru : new Locale[]{new Locale("ru"), new Locale("ru", "RU"), new Locale("RU"), Locale.forLanguageTag("ru-UA"),
+                Locale.forLanguageTag("ru-Latn-RU-x-test")}) {
+            assertEquals("Россия", both.name(ru), ru.toString());
+        }
+        for (Locale other : new Locale[]{Locale.ENGLISH, Locale.US, Locale.GERMANY, Locale.ROOT, new Locale("uk", "UA"),
+                new Locale("be"), new Locale("", "RU"), Locale.forLanguageTag("und-RU"), new Locale("rus")}) {
+            assertEquals("Russia", both.name(other), other.toString());
+        }
+        Region onlyRu = new Region(1, "RU-MOW", "Москва", "", Map.of());
+        assertEquals("Москва", onlyRu.name(Locale.ENGLISH));
+        assertEquals("Москва", onlyRu.name(new Locale("ru")));
+        City onlyEn = new City(1, "", "Kyiv", 0, 0, Map.of());
+        assertEquals("Kyiv", onlyEn.name(new Locale("ru")));
+        assertEquals("Kyiv", onlyEn.name(Locale.FRENCH));
+        City none = new City(1, "", "", 0, 0, Map.of());
+        assertEquals("", none.name(new Locale("ru")));
+        assertEquals("", new Country(185, "RU").name(Locale.ENGLISH)); // country database: no names
+        assertThrows(NullPointerException.class, () -> both.name(null));
+
+        GeoInfo kyiv = new SxGeo(small().build()).lookup("93.73.35.74").orElseThrow();
+        assertEquals("Украина", kyiv.country().name(new Locale("ru")));
+        assertEquals("Kyiv", kyiv.region().name(Locale.UK));
+        assertEquals("Киев", kyiv.city().name(Locale.forLanguageTag("ru-RU")));
+    }
+
+    // ---------------------------------------------------------------- country fast path
+
+    @ParameterizedTest
+    @MethodSource("configs")
+    void countryAgreesWithLookup(Config config) throws ReflectiveOperationException {
+        SyntheticDb spec = config.db();
+        byte[] data = spec.build();
+        SxGeo db = new SxGeo(data), slow = withoutFastPath(data);
+        boolean[] fast = fastPath(db);
+        if (config.city()) {
+            assertEquals(config.pack() == null, fast[0], "country records: id at a fixed offset");
+            assertEquals(config.pack() == null, fast[1], "city records: country_id at a fixed offset");
+        }
+        assertArrayEquals(new boolean[2], fastPath(slow));
+        for (long ip : spec.probes()) {
+            String s = ip(ip);
+            Optional<GeoInfo> info = db.lookup(s);
+            OptionalInt id = db.countryId(s);
+            assertEquals(info.map(g -> g.country().id()).filter(i -> i > 0).map(OptionalInt::of).orElse(OptionalInt.empty()), id, s);
+            assertEquals(info.map(g -> g.country().iso()).filter(i -> !i.isEmpty()), db.country(s), s);
+            assertEquals(slow.countryId(s), id, s);
+            assertEquals(slow.country(s), db.country(s), s);
+        }
+    }
+
+    @Test
+    void countryFastPathReadsOnlyTheId() throws ReflectiveOperationException {
+        assertArrayEquals(new boolean[]{true, true}, fastPath(new SxGeo(small().build())));
+        String[][] packs = {SyntheticDb.CITY_PACK, SLOW_PACK,
+                {"c3:iso3/t:t8/S:id/c2:iso/n2:lat/n2:lon/b:name_ru/b:name_en", SyntheticDb.CITY_PACK[1],
+                        "d:area/I:region_seek/c4:code/I:country_id/M:id/N5:lat/N5:lon/b:name_ru/b:name_en"},
+                {"b:name_en/T:id/c2:iso", SyntheticDb.CITY_PACK[1], "M:region_seek/c3:x/S:y/T:country_id/M:id/b:name_ru/b:name_en"},
+                {"f:id/c2:iso/b:name_en", SyntheticDb.CITY_PACK[1], "m:region_seek/n2:x/d:country_id/M:id/b:name_ru/b:name_en"}};
+        boolean[][] fast = {{true, true}, {false, false}, {true, true}, {false, true}, {true, true}};
+        for (int i = 0; i < packs.length; i++) {
+            SyntheticDb spec = small();
+            spec.pack = packs[i].clone();
+            spec.cities.remove("kyiv");
+            spec.ranges.removeIf(r -> r.target().equals("city:kyiv"));
+            byte[] data = spec.build();
+            SxGeo db = new SxGeo(data);
+            assertArrayEquals(fast[i], fastPath(db), String.join("|", packs[i]));
+            assertMatches(spec, db, spec.probes());
+            // the last city record (Moscow) loses the NUL of its last string: lookup() fails, while country()
+            // needs it only when country_id comes after a string (then the whole record is decoded)
+            byte[] noNul = data.clone();
+            noNul[noNul.length - 1] = 'x';
+            SxGeo broken = new SxGeo(noNul);
+            assertThrows(IllegalStateException.class, () -> broken.lookup("2.0.0.1"));
+            assertEquals(Optional.of("RU"), broken.country("1.0.0.1"));
+            if (fast[i][1]) {
+                assertEquals(Optional.of("RU"), broken.country("2.0.0.1"));
+                assertEquals(OptionalInt.of(185), broken.countryId("2.0.0.1"));
+            } else {
+                assertThrows(IllegalStateException.class, () -> broken.country("2.0.0.1"));
+                assertThrows(IllegalStateException.class, () -> broken.countryId("2.0.0.1"));
+            }
+        }
+    }
+
+    @Test
+    void countryFastPathKeepsBoundsChecks() throws ReflectiveOperationException {
+        SyntheticDb spec = small(); // country_id is at offset 3 of a city record
+        spec.build();
+        int end = spec.countrySize + spec.citySize;
+        // records starting 0..3 bytes before the end of the cities section: country_id does not fit
+        for (int back = 0; back <= 4; back++) {
+            spec.ranges.add(new SyntheticDb.Range(ip("4.0." + back + ".0"), ip("4.0." + back + ".255"), "raw:" + (end - back)));
+        }
+        SxGeo db = new SxGeo(spec.build());
+        for (int back = 0; back <= 3; back++) {
+            String ip = "4.0." + back + ".1";
+            String expected = assertThrows(IllegalStateException.class, () -> db.lookup(ip)).getMessage();
+            assertTrue(expected.startsWith("Corrupted Sypex Geo database: city record at offset "), expected);
+            assertEquals(expected, assertThrows(IllegalStateException.class, () -> db.country(ip)).getMessage(), ip);
+            assertEquals(expected, assertThrows(IllegalStateException.class, () -> db.countryId(ip)).getMessage(), ip);
+        }
+        // here it fits, the rest of the record does not
+        assertThrows(IllegalStateException.class, () -> db.lookup("4.0.4.1"));
+        db.countryId("4.0.4.1");
+
+        // randomly corrupted databases: the fast path answers whenever the full decoding does, and the same
+        for (Config config : List.of(configs().toList().get(5), configs().toList().get(9), configs().toList().get(11))) {
+            SyntheticDb random = config.db();
+            byte[] good = random.build();
+            List<String> ips = random.probes().stream().filter(x -> x % 5 == 0).map(SyntheticDb::ip).toList();
+            Random rnd = new Random(config.seed());
+            for (int round = 0; round < 150; round++) {
+                byte[] bad = good.clone();
+                for (int i = 0; i < 1 + rnd.nextInt(6); i++) {
+                    bad[random.regionsStart + rnd.nextInt(bad.length - random.regionsStart)] = (byte) rnd.nextInt(256);
+                }
+                if (round % 4 == 0) bad[28 + rnd.nextInt(4)] = (byte) rnd.nextInt(256); // city_size
+                SxGeo fast, slow;
+                try {
+                    fast = new SxGeo(bad);
+                    slow = withoutFastPath(bad);
+                } catch (IllegalArgumentException e) {
+                    continue;
+                }
+                for (String ip : ips) {
+                    Object full = outcome(() -> slow.countryId(ip)), quick = outcome(() -> fast.countryId(ip));
+                    if (full instanceof OptionalInt || quick instanceof String) assertEquals(full, quick, ip);
+                }
+            }
+        }
+    }
+
+    private static Object outcome(java.util.function.Supplier<Object> call) {
+        try {
+            return call.get();
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage().startsWith("Corrupted Sypex Geo database"), e.getMessage());
+            return e.getMessage();
+        }
     }
 }

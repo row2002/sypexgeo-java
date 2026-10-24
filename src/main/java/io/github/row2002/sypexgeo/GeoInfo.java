@@ -1,5 +1,7 @@
 package io.github.row2002.sypexgeo;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Lookup result.
  *
@@ -8,5 +10,5 @@ package io.github.row2002.sypexgeo;
  * @param region  {@code null} when the database (or the IP range) has no region
  * @param city    {@code null} when the database (or the IP range) has no city
  */
-public record GeoInfo(Country country, Region region, City city) {
+public record GeoInfo(Country country, @Nullable Region region, @Nullable City city) {
 }

@@ -100,11 +100,18 @@ class SxGeoTest {
     }
 
     @Test
-    void inet4AddressOverload() throws IOException {
+    void inetAddressOverloadsAndMappedIpv6() throws IOException {
         SxGeo city = city();
         Inet4Address address = (Inet4Address) InetAddress.getByAddress(new byte[]{77, 88, 8, 8});
         assertEquals(Optional.of("RU"), city.country(address));
         assertEquals(city.lookup("77.88.8.8"), city.lookup(address));
+        InetAddress mapped = InetAddress.getByName("::ffff:93.73.35.74");
+        assertEquals(Optional.of("UA"), city.country(mapped));
+        assertEquals(city.countryId("93.73.35.74"), city.countryId(mapped));
+        assertEquals(city.lookup("93.73.35.74"), city.lookup(mapped));
+        assertEquals(city.lookup("93.73.35.74"), city.lookup("::FFFF:93.73.35.74"));
+        assertEquals(Optional.of("RU"), country().country(InetAddress.getByName("::ffff:77.88.8.8")));
+        assertEquals(Optional.empty(), city.lookup(InetAddress.getByName("2a02:6b8::feed:0ff")));
     }
 
     @Test

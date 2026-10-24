@@ -1,5 +1,6 @@
 package io.github.row2002.sypexgeo;
 
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -17,5 +18,13 @@ public record Country(int id, String iso, String nameRu, String nameEn, double l
 
     Country(int id, String iso) {
         this(id, iso, "", "", 0, 0, Map.of());
+    }
+
+    /**
+     * Name for the locale: {@code nameRu} for Russian ({@code locale.getLanguage()} is {@code "ru"}) if it is not
+     * empty, otherwise {@code nameEn}, or {@code nameRu} if {@code nameEn} is empty.
+     */
+    public String name(Locale locale) {
+        return SxGeo.name(locale, nameRu, nameEn);
     }
 }
